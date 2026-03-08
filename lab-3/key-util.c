@@ -2,18 +2,6 @@
 #include <stdint.h>
 #include "definitions.c"
 
-// PRESENT-80 key is 80 bits = 10 bytes = 1 byte (uint8_t) x 10
-// there is no existing type that stores 10 bytes in C
-// we will store the key in big endian, i.e.:
-//    k79...k72 = b[0]
-//    k71...k64 = b[1]
-//    ...
-//    k7 ...k0  = b[9]
-typedef struct
-{
-    uint8_t b[10];
-} u80;
-
 // will read 20 hex chars from given text file into destination pointer
 void read_key(FILE *file_ptr, u80 *dest)
 {
@@ -46,7 +34,7 @@ u80 left_rotate_u80(const u80 initial, const int shift)
     // first rotate bytes by q_shift
     for (int i = 0; i < 10; i++)
     {
-        rotated.b[(i + q_shift) % 10] = initial.b[i];
+        rotated.b[(i + (10 - q_shift)) % 10] = initial.b[i];
     }
 
     // then inside each byte apply remainder shift. For this, don't forget to include
