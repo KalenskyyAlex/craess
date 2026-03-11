@@ -1,7 +1,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include "definitions.c"
-#include "key-util.c"
+
+#ifndef PRESENT_GUARD
+#define PRESENT_GUARD
 
 void generate_key_schedule(const u80 key, uint64_t key_schedule[ROUNDS])
 {
@@ -18,7 +20,7 @@ void generate_key_schedule(const u80 key, uint64_t key_schedule[ROUNDS])
     }
 }
 
-size_t read_plaintext(FILE *file_ptr, uint64_t **dest)
+size_t read_blocks_hex(FILE *file_ptr, uint64_t **dest)
 {
     if (!file_ptr || !dest)
         return -1;
@@ -65,14 +67,42 @@ size_t read_plaintext(FILE *file_ptr, uint64_t **dest)
     return n_blocks;
 }
 
+void write_blocks_hex(FILE *f, uint64_t *blocks, size_t n_blocks)
+{
+    for (size_t i = 0; i < n_blocks; i++)
+    {
+        fprintf(f, "%016llX\n", (unsigned long long)blocks[i]);
+    }
+}
+
 void encrypt_present_80_bitsliced(
     const uint64_t key_schedule[ROUNDS + 1],
     const uint64_t *plaintext,
     const size_t n_blocks,
     uint64_t ciphertext[n_blocks])
 {
+    size_t n_blocks_padded = ((n_blocks / 8) + 1) * 8;
+    if (n_blocks % 8 == 0)
+    {
+        n_blocks_padded = n_blocks;
+    }
+
+    uint64_t padded[n_blocks_padded];
+    uint64_t ciphertext_padded[n_blocks_padded];
     for (int i = 0; i < n_blocks; i++)
-        ciphertext[i] = 0;
+    {
+        padded[i] = plaintext[i];
+    }
+    // pad with 0-blocks to be divisible by 8
+    for (int i = n_blocks; i < n_blocks_padded; i++)
+    {
+        padded[i] = 0;
+    }
+
+    for (int i = 0; i < n_blocks_padded; i++)
+    {
+        ciphertext_padded[i] = 0;
+    }
 
     // process in chunks of 8 blocks assuming 8bit word support (always for modern CPUs)
     // convert keys in convenient form (e.g. 0b1 bit from key becomes 0b11111111 to apply on whole row at once)
@@ -92,7 +122,7 @@ void encrypt_present_80_bitsliced(
         }
     }
 
-    for (int i = 0; i < n_blocks / 8; i++)
+    for (int i = 0; i < n_blocks_padded / 8; i++)
     {
         // uint8_t is 8 bits, so this stores S[64][8] efficiently without separate cell for single bit
         uint8_t S[64];
@@ -100,7 +130,7 @@ void encrypt_present_80_bitsliced(
         // convert to bitsliced form
         for (int j = 0; j < 64; j++)
         {
-            S[j] = (((plaintext[i * 8] >> (64 - j - 1)) & 0b1) << 7) | (((plaintext[i * 8 + 1] >> (64 - j - 1)) & 0b1) << 6) | (((plaintext[i * 8 + 2] >> (64 - j - 1)) & 0b1) << 5) | (((plaintext[i * 8 + 3] >> (64 - j - 1)) & 0b1) << 4) | (((plaintext[i * 8 + 4] >> (64 - j - 1)) & 0b1) << 3) | (((plaintext[i * 8 + 5] >> (64 - j - 1)) & 0b1) << 2) | (((plaintext[i * 8 + 6] >> (64 - j - 1)) & 0b1) << 1) | ((plaintext[i * 8 + 7] >> (64 - j - 1)) & 0b1);
+            S[j] = (((padded[i * 8] >> (64 - j - 1)) & 0b1) << 7) | (((padded[i * 8 + 1] >> (64 - j - 1)) & 0b1) << 6) | (((padded[i * 8 + 2] >> (64 - j - 1)) & 0b1) << 5) | (((padded[i * 8 + 3] >> (64 - j - 1)) & 0b1) << 4) | (((padded[i * 8 + 4] >> (64 - j - 1)) & 0b1) << 3) | (((padded[i * 8 + 5] >> (64 - j - 1)) & 0b1) << 2) | (((padded[i * 8 + 6] >> (64 - j - 1)) & 0b1) << 1) | ((padded[i * 8 + 7] >> (64 - j - 1)) & 0b1);
         }
 
         // perform PRESENT-80 for bitsliced blocks
@@ -112,7 +142,6 @@ void encrypt_present_80_bitsliced(
                 S[j] ^= bitsliced_key_schedule[round][j];
             }
 
-            // TODO precompute TB and combine Sbox and pLayer
             // Sbox
             uint8_t state[64];
             for (int b = 0; b < 16; b++)
@@ -131,7 +160,6 @@ void encrypt_present_80_bitsliced(
             // pLayer
             for (int j = 0; j < 64; j++)
             {
-                printf("%d ", p_layer(j));
                 S[p_layer(j)] = state[j];
             }
         }
@@ -145,35 +173,39 @@ void encrypt_present_80_bitsliced(
         // convert back to 8 ciphertext blocks
         for (int j = 0; j < 64; j++)
         {
-            ciphertext[i * 8] <<= 1;
-            ciphertext[i * 8] |= (S[j] & 0b10000000) ? 0b1 : 0b0;
+            ciphertext_padded[i * 8] <<= 1;
+            ciphertext_padded[i * 8] |= (S[j] & 0b10000000) ? 0b1 : 0b0;
 
-            ciphertext[i * 8 + 1] <<= 1;
-            ciphertext[i * 8 + 1] |= (S[j] & 0b01000000) ? 0b1 : 0b0;
+            ciphertext_padded[i * 8 + 1] <<= 1;
+            ciphertext_padded[i * 8 + 1] |= (S[j] & 0b01000000) ? 0b1 : 0b0;
 
-            ciphertext[i * 8 + 2] <<= 1;
-            ciphertext[i * 8 + 2] |= (S[j] & 0b00100000) ? 0b1 : 0b0;
+            ciphertext_padded[i * 8 + 2] <<= 1;
+            ciphertext_padded[i * 8 + 2] |= (S[j] & 0b00100000) ? 0b1 : 0b0;
 
-            ciphertext[i * 8 + 3] <<= 1;
-            ciphertext[i * 8 + 3] |= (S[j] & 0b00010000) ? 0b1 : 0b0;
+            ciphertext_padded[i * 8 + 3] <<= 1;
+            ciphertext_padded[i * 8 + 3] |= (S[j] & 0b00010000) ? 0b1 : 0b0;
 
-            ciphertext[i * 8 + 4] <<= 1;
-            ciphertext[i * 8 + 4] |= (S[j] & 0b00001000) ? 0b1 : 0b0;
+            ciphertext_padded[i * 8 + 4] <<= 1;
+            ciphertext_padded[i * 8 + 4] |= (S[j] & 0b00001000) ? 0b1 : 0b0;
 
-            ciphertext[i * 8 + 5] <<= 1;
-            ciphertext[i * 8 + 5] |= (S[j] & 0b00000100) ? 0b1 : 0b0;
+            ciphertext_padded[i * 8 + 5] <<= 1;
+            ciphertext_padded[i * 8 + 5] |= (S[j] & 0b00000100) ? 0b1 : 0b0;
 
-            ciphertext[i * 8 + 6] <<= 1;
-            ciphertext[i * 8 + 6] |= (S[j] & 0b00000010) ? 0b1 : 0b0;
+            ciphertext_padded[i * 8 + 6] <<= 1;
+            ciphertext_padded[i * 8 + 6] |= (S[j] & 0b00000010) ? 0b1 : 0b0;
 
-            ciphertext[i * 8 + 7] <<= 1;
-            ciphertext[i * 8 + 7] |= (S[j] & 0b00000001) ? 0b1 : 0b0;
+            ciphertext_padded[i * 8 + 7] <<= 1;
+            ciphertext_padded[i * 8 + 7] |= (S[j] & 0b00000001) ? 0b1 : 0b0;
         }
     }
 
-    // TODO write in file
-    // TODO cli
-    // TODO decrypt
-    // TODO padding for not mult.8 amount of blocks
+    // ignore padded and only include n_blocks to ciphertext
+    for (int i = 0; i < n_blocks; i++)
+    {
+        ciphertext[i] = ciphertext_padded[i];
+    }
+    
     return;
 }
+
+#endif

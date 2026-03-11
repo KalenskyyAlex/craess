@@ -1,88 +1,76 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
+
 #include "present-80.c"
 
-void print_keys_hex(uint64_t keys[ROUNDS + 1])
+int main(int argc, char *argv[])
 {
-   printf("Key schedule: \n");
-   for (int i = 0; i < ROUNDS; i++)
+   if (argc != 4)
    {
-      printf("Round %5d: ", i + 1);
-      uint64_t k = keys[i];
-      for (int byte = 7; byte >= 0; byte--)
-      {
-         // extract each byte
-         uint8_t b = (k >> (byte * 8)) & 0xFF;
-         printf("%02X", b);
-         if (byte > 0)
-            printf(" ");
-      }
-      printf("\n");
-   }
-
-   printf("Final round: ");
-   uint64_t k = keys[ROUNDS];
-   for (int byte = 7; byte >= 0; byte--)
-   {
-      // extract each byte
-      uint8_t b = (k >> (byte * 8)) & 0xFF;
-      printf("%02X", b);
-      if (byte > 0)
-         printf(" "); 
-   }
-   printf("\n");
-
-
-}
-
-int main()
-{
-   u80 key;
-
-   FILE *key_file = fopen("key.txt", "rb");
-   FILE *plaintext_file = fopen("plaintext.txt", "rb");
-   read_key(key_file, &key);
-
-   printf("Key provided: \n");
-   for (int i = 0; i < 10; i++)
-   {
-      printf("%02X ", key.b[i]);
-   }
-   printf("\n\n");
-
-   uint64_t keys[ROUNDS + 1];
-   generate_key_schedule(key, keys);
-
-   uint64_t *plaintext;
-   size_t n_blocks = read_plaintext(plaintext_file, &plaintext);
-   if (n_blocks == -1) {
-      printf("Failed to read the plaintext \n", n_blocks);
+      printf("Usage:\n");
+      printf("  %s <key_file> <plaintext_file> <ciphertext_file>\n", argv[0]);
       return 1;
    }
-   printf("Read %d blocks of plaintext \n", n_blocks);
-   
-   print_keys_hex(keys);
 
-   uint64_t ciphertext[n_blocks];
-   encrypt_present_80_bitsliced(keys, plaintext, n_blocks, ciphertext);
+   char *key_path = argv[1];
+   char *input_path = argv[2];
+   char *output_path = argv[3];
 
-   printf("\nCiphertext: \n");
-   for (int i = 0; i < n_blocks; i++)
+   FILE *key_file = fopen(key_path, "rb");
+   if (!key_file)
    {
-      printf("Block %5d: ", i + 1);
-      uint64_t k = ciphertext[i];
-      for (int byte = 7; byte >= 0; byte--)
-      {
-         // extract each byte
-         uint8_t b = (k >> (byte * 8)) & 0xFF;
-         printf("%02X", b);
-         if (byte > 0)
-            printf(" ");
-      }
-      printf("\n");
+      perror("Failed to open key file");
+      return 1;
    }
-   
-   free(plaintext);
+
+   FILE *input_file = fopen(input_path, "rb");
+   if (!input_file)
+   {
+      perror("Failed to open plaintext file");
+      return 1;
+   }
+
+   FILE *output_file = fopen(output_path, "wb");
+   if (!output_file)
+   {
+      perror("Failed to open ciphertext file");
+      return 1;
+   }
+
+   u80 key;
+   read_key(key_file, &key);
+   fclose(key_file);
+
+   uint64_t round_keys[ROUNDS + 1];
+   generate_key_schedule(key, round_keys);
+
+   uint64_t *blocks;
+   size_t n_blocks = read_blocks_hex(input_file, &blocks);
+   fclose(input_file);
+
+   if (n_blocks == (size_t)-1)
+   {
+      printf("Failed to read input file\n");
+      return 1;
+   }
+
+   uint64_t *result = malloc(sizeof(uint64_t) * n_blocks);
+   if (!result)
+   {
+      printf("Memory allocation failed\n");
+      return 1;
+   }
+
+   encrypt_present_80_bitsliced(round_keys, blocks, n_blocks, result);
+
+   write_blocks_hex(output_file, result, n_blocks);
+
+   fclose(output_file);
+   free(blocks);
+   free(result);
+
+   printf("Success\n");
    return 0;
 }
