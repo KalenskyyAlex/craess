@@ -44,21 +44,22 @@ for nibble in range(16):
             # Find which traces resulted in this S-box value
             mask = (signals == v)
             group = power_per_time_sample[mask]
-
+            
             if len(group) > 0:
-                group_mean = sum(group) / len(group)
-                group_means.append(group_mean)
-                group_variance = sum((group_mean - el)**2 for el in group) / len(group)
-                group_variances.append(group_variance)
+                group_means.append(np.mean(group))
+                
+                for j in range(len(group)):
+                    group_variances.append(group[j] - group_means[v])                
 
         # SNR Formula: Var(Means) / Mean(Variances)
         groups_mean =  sum(group_means) / len(group_means)
 
-        var_X = sum((groups_mean - el)**2 for el in group_means)
-        var_N = sum(group_variances) / len(group_variances) / len(group_variances)
-
+        var_X = np.var(group_means)
+        var_N = np.var(group_variances)
+      
         snr_values[t] = var_X / var_N
 
+    plt.cla()
     plt.plot(snr_values, color='blue', linewidth=1)
 
     plt.title(f'SNR Trace for Nibble {NIBBLE}', fontsize=14)
@@ -69,6 +70,7 @@ for nibble in range(16):
         poi = np.argsort(snr_values)[-3]
     else:
         poi = np.argmax(snr_values)
+    print(snr_values[poi])
     plt.axvline(x=poi, color='red', linestyle='--', label=f'POI at {poi}')
     plt.legend()
 
